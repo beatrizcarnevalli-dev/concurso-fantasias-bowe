@@ -145,10 +145,25 @@ h1 small{display:block;font-size:.42em;color:var(--candle);margin-top:.45em;text
 .lb[open]{display:grid;place-items:center}
 .lb[open]::backdrop{animation:dim .3s var(--ease-out)}
 @keyframes dim{from{opacity:0}}
-.lb figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:1rem;max-width:min(92vw,40rem);padding:3.5rem 1rem 1.5rem}
+.lb figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:1rem;max-width:min(92vw,40rem);padding:4.75rem 1rem 1.25rem}
 .lb .photo{background:#FBF5EA;padding:.6rem .6rem 0;border-radius:3px;box-shadow:0 30px 60px -20px rgba(0,0,0,.8);transform:rotate(-.6deg)}
-.lb img{display:block;max-width:min(86vw,36rem);max-height:calc(100dvh - 13rem);width:auto;height:auto;object-fit:contain}
+.lb img{display:block;max-width:min(86vw,36rem);max-height:calc(100dvh - 16rem);width:auto;height:auto;object-fit:contain}
 .lb .photo::after{content:"";display:block;height:.6rem}
+.lb .zoomer{overflow:hidden;cursor:zoom-in;touch-action:none;user-select:none;-webkit-user-select:none}
+.lb img{transform-origin:50% 50%;-webkit-user-drag:none}
+.lb img.anim{transition:transform .35s var(--ease-out)}
+.lb.zoomed .photo{transform:none}
+.lb.zoomed .zoomer{cursor:grab}
+.lb.zoomed .zoomer:active{cursor:grabbing}
+.lb .zhint{margin:.5rem 0 0;font-size:.8rem;color:#9C8BA3}
+.lb .coarse{display:none}
+@media (hover:none),(pointer:coarse){.lb .fine{display:none}.lb .coarse{display:inline}}
+.lb .zoombar{position:absolute;top:max(1rem,env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:.15rem;padding:.25rem;
+  border-radius:99px;background:rgba(20,12,28,.6);border:1px solid rgba(255,248,236,.18)}
+.lb .zoombar button{position:static;width:2.5rem;height:2.5rem;border:0;background:transparent}
+.lb .zoombar button:hover:not(:disabled){background:var(--blood)}
+.lb .zoombar button:disabled{opacity:.35;cursor:default}
+.lb .zlevel{min-width:3.2rem;text-align:center;font-size:.85rem;font-variant-numeric:tabular-nums;color:#FFF8EC}
 .lb figcaption{text-align:center}
 .lb .name{font-family:"Pirata One",Georgia,serif;font-size:clamp(1.8rem,5vw,2.4rem);line-height:1;margin:0 0 .3rem;color:#FFF8EC}
 .lb .costume{margin:0;color:#CDBFD0;max-width:30rem}
@@ -220,13 +235,19 @@ h1 small{display:block;font-size:.42em;color:var(--candle);margin-top:.45em;text
 
 <dialog class="lb" id="lb" aria-labelledby="lb-name">
   <figure>
-    <div class="photo"><img id="lb-img" alt=""></div>
+    <div class="photo"><div class="zoomer" id="lb-zoomer"><img id="lb-img" alt="" draggable="false"></div></div>
     <figcaption>
       <p class="name" id="lb-name"></p>
       <p class="costume" id="lb-costume"></p>
       <p class="count" id="lb-count"></p>
+      <p class="zhint"><span class="fine">Clique na foto ou role para dar zoom. Arraste para mover.</span><span class="coarse">Toque duas vezes ou faça pinça para dar zoom.</span></p>
     </figcaption>
   </figure>
+  <div class="zoombar" role="group" aria-label="Zoom">
+    <button class="zout" type="button" aria-label="Diminuir zoom"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 12h12"/></svg></button>
+    <output class="zlevel" id="lb-zlevel" aria-live="polite">100%</output>
+    <button class="zin" type="button" aria-label="Aumentar zoom"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 12h12M12 6v12"/></svg></button>
+  </div>
   <button class="close" type="button" aria-label="Fechar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   <button class="prev" type="button" aria-label="Foto anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
   <button class="next" type="button" aria-label="Próxima foto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
@@ -301,7 +322,79 @@ function fill(i){
   $("#lb-name").textContent = p.name;
   $("#lb-costume").textContent = p.costume;
   $("#lb-count").textContent = (cur + 1) + " de " + PARTICIPANTS.length;
+  resetZoom();
 }
+
+/* ---- zoom: clique/rolagem no desktop, toque duplo/pinça no celular ---- */
+const zoomer = $("#lb-zoomer"), zLevel = $("#lb-zlevel");
+const zIn = lb.querySelector(".zin"), zOut = lb.querySelector(".zout");
+const MAXZ = 3, Z = {s: 1, x: 0, y: 0};
+function applyZoom(anim){
+  lbImg.classList.toggle("anim", !!anim);
+  lbImg.style.transform = Z.s === 1 ? "" : `translate(${Z.x}px,${Z.y}px) scale(${Z.s})`;
+  lb.classList.toggle("zoomed", Z.s > 1);
+  zLevel.textContent = Math.round(Z.s * 100) + "%";
+  zOut.disabled = Z.s <= 1; zIn.disabled = Z.s >= MAXZ;
+}
+function clampPan(){
+  const mx = zoomer.clientWidth * (Z.s - 1) / 2, my = zoomer.clientHeight * (Z.s - 1) / 2;
+  Z.x = Math.max(-mx, Math.min(mx, Z.x)); Z.y = Math.max(-my, Math.min(my, Z.y));
+}
+/* amplia mantendo fixo o ponto (cx, cy) da tela; sem ponto, usa o centro */
+function zoomTo(s, cx, cy, anim){
+  s = Math.max(1, Math.min(MAXZ, s));
+  const r = zoomer.getBoundingClientRect();
+  const px = cx == null ? 0 : cx - (r.left + r.width / 2), py = cy == null ? 0 : cy - (r.top + r.height / 2);
+  const k = s / Z.s;
+  Z.x = px - (px - Z.x) * k; Z.y = py - (py - Z.y) * k; Z.s = s;
+  if(s === 1){ Z.x = 0; Z.y = 0; }
+  clampPan(); applyZoom(anim);
+}
+function resetZoom(){ Z.s = 1; Z.x = 0; Z.y = 0; applyZoom(false); }
+const toggleAt = (x, y) => zoomTo(Z.s > 1 ? 1 : 2.5, x, y, true);
+
+const pts = new Map();
+let drag = null, pinch = null, moved = 0, pinched = false, lastTap = null;
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function startDrag(p){ drag = {x: p.x, y: p.y, tx: Z.x, ty: Z.y}; }
+zoomer.addEventListener("pointerdown", e => {
+  zoomer.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if(pts.size === 1){ moved = 0; pinched = false; startDrag(pts.get(e.pointerId)); }
+  if(pts.size === 2){ const [a, b] = pts.values(); pinch = {d: dist(a, b), s: Z.s}; pinched = true; drag = null; }
+});
+zoomer.addEventListener("pointermove", e => {
+  if(!pts.has(e.pointerId)) return;
+  pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if(pinch && pts.size === 2){
+    const [a, b] = pts.values();
+    zoomTo(pinch.s * dist(a, b) / pinch.d, (a.x + b.x) / 2, (a.y + b.y) / 2, false);
+  } else if(drag){
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    moved = Math.max(moved, Math.hypot(dx, dy));
+    if(Z.s > 1){ Z.x = drag.tx + dx; Z.y = drag.ty + dy; clampPan(); applyZoom(false); }
+  }
+});
+function endPointer(e){
+  if(!pts.delete(e.pointerId)) return;
+  if(pts.size === 1){ pinch = null; startDrag([...pts.values()][0]); return; }
+  if(pts.size) return;
+  drag = null; pinch = null;
+  if(pinched || moved > 8 || e.type === "pointercancel") return;
+  if(e.pointerType === "mouse"){ toggleAt(e.clientX, e.clientY); return; }
+  const now = Date.now();
+  if(lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30){
+    lastTap = null; toggleAt(e.clientX, e.clientY);
+  } else lastTap = {t: now, x: e.clientX, y: e.clientY};
+}
+zoomer.addEventListener("pointerup", endPointer);
+zoomer.addEventListener("pointercancel", endPointer);
+zoomer.addEventListener("wheel", e => {
+  e.preventDefault();
+  zoomTo(Z.s * Math.exp(-e.deltaY * (e.ctrlKey ? .01 : .0015)), e.clientX, e.clientY, false);
+}, {passive: false});
+zIn.addEventListener("click", () => zoomTo(Z.s * 1.5, null, null, true));
+zOut.addEventListener("click", () => zoomTo(Z.s / 1.5, null, null, true));
 function replay(cls){
   lb.classList.remove("swap", "back", "pop"); void lb.offsetWidth;
   cls.split(" ").forEach(c => c && lb.classList.add(c));
@@ -321,6 +414,7 @@ function openLb(i){
 }
 function closeLb(){
   const to = thumbs[cur];
+  resetZoom();
   if(!canVT() || !inView(to)){ lb.close(); return; }
   lbImg.style.viewTransitionName = "shot";
   const t = document.startViewTransition(() => {
@@ -336,14 +430,23 @@ lb.addEventListener("click", e => { if(e.target === lb || e.target.tagName === "
 lb.querySelector(".close").addEventListener("click", closeLb);
 lb.querySelector(".prev").addEventListener("click", () => step(-1));
 lb.querySelector(".next").addEventListener("click", () => step(1));
-lb.addEventListener("keydown", e => {
+const PAN = {ArrowLeft: [60, 0], ArrowRight: [-60, 0], ArrowUp: [0, 60], ArrowDown: [0, -60]};
+document.addEventListener("keydown", e => {
+  if(!lb.open) return;
+  if(e.key === "+" || e.key === "="){ e.preventDefault(); zoomTo(Z.s * 1.5, null, null, true); return; }
+  if(e.key === "-"){ e.preventDefault(); zoomTo(Z.s / 1.5, null, null, true); return; }
+  if(e.key === "0"){ e.preventDefault(); zoomTo(1, null, null, true); return; }
+  /* com zoom, as setas movem a foto; sem zoom, trocam de foto */
+  if(Z.s > 1 && PAN[e.key]){ e.preventDefault(); Z.x += PAN[e.key][0]; Z.y += PAN[e.key][1]; clampPan(); applyZoom(true); return; }
   if(e.key === "ArrowRight"){ e.preventDefault(); step(1); }
   if(e.key === "ArrowLeft"){ e.preventDefault(); step(-1); }
 });
+/* deslizar troca de foto só sem zoom e com um dedo */
 let x0 = null;
-lb.addEventListener("touchstart", e => { x0 = e.touches[0].clientX; }, {passive:true});
+lb.addEventListener("touchstart", e => { x0 = (e.touches.length === 1 && Z.s === 1) ? e.touches[0].clientX : null; }, {passive:true});
+lb.addEventListener("touchmove", e => { if(e.touches.length > 1 || Z.s > 1) x0 = null; }, {passive:true});
 lb.addEventListener("touchend", e => {
-  if(x0 === null) return;
+  if(x0 === null || e.touches.length) return;
   const dx = e.changedTouches[0].clientX - x0; x0 = null;
   if(Math.abs(dx) > 50) step(dx < 0 ? 1 : -1);
 });
